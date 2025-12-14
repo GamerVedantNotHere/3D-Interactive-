@@ -1,156 +1,118 @@
-<!DOCTYPE html>
+    <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-    <title>Real-Time Hand Particles</title>
+    <title>3D Motion Particles</title>
     <style>
-        body { 
-            margin: 0; 
-            overflow: hidden; 
-            background-color: #050505; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            touch-action: none; 
-        }
+        /* --- GLOBAL STYLES --- */
+        body { margin: 0; overflow: hidden; background-color: #050505; touch-action: none; font-family: 'Segoe UI', sans-serif; }
         video { display: none; }
         
+        /* --- UI OVERLAY --- */
         #ui {
-            position: absolute;
-            bottom: 30px;
-            left: 0;
-            width: 100%;
-            text-align: center;
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none;
-            z-index: 10;
-        }
-        
-        #status {
-            display: inline-block;
-            background: rgba(0, 255, 200, 0.15);
-            border: 1px solid #00ffcc;
-            color: #00ffcc;
-            padding: 10px 20px;
-            border-radius: 30px;
-            font-weight: 600;
-            font-size: 14px;
-            backdrop-filter: blur(5px);
-            box-shadow: 0 0 15px rgba(0, 255, 204, 0.2);
+            display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+            padding-bottom: 20px;
         }
 
-        #loader {
+        .hud-panel {
+            background: rgba(10, 15, 30, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 255, 255, 0.15);
+            padding: 10px 25px;
+            border-radius: 20px;
+            color: #fff;
+            margin-bottom: 15px;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.05);
+            text-align: center;
+        }
+
+        #status-text {
+            font-size: 14px; font-weight: 700; letter-spacing: 2px;
+            color: #00ffcc; text-transform: uppercase;
+        }
+
+        /* --- CREDIT LINE --- */
+        #credits {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-top: 5px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+        #credits b { color: #fff; }
+
+        /* --- LOADING SCREEN --- */
+        #loading {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: #000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            color: #00ffcc;
-            z-index: 20;
-            transition: opacity 0.5s;
+            background: #000; display: flex; flex-direction: column; 
+            align-items: center; justify-content: center;
+            color: #00ffcc; z-index: 10;
         }
         .spinner {
-            width: 40px; height: 40px; border: 4px solid #333; border-top-color: #00ffcc;
-            border-radius: 50%; animation: spin 1s infinite linear; margin-bottom: 20px;
+            width: 40px; height: 40px; border: 4px solid #333; 
+            border-top: 4px solid #00ffcc; border-radius: 50%; 
+            animation: spin 1s linear infinite; margin-bottom: 20px;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
     </style>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 </head>
 <body>
 
-    <div id="loader">
+    <div id="loading">
         <div class="spinner"></div>
-        <div>Loading AI...</div>
+        <div style="font-size: 14px; letter-spacing: 2px;">INITIALIZING AI...</div>
     </div>
 
     <div id="ui">
-        <div id="status">Show your hand</div>
+        <div class="hud-panel">
+            <div id="status-text">SHOW HAND</div>
+        </div>
+        
+        <div id="credits">Developed by <b>Vedant Agarwal</b></div>
     </div>
 
     <video class="input_video" playsinline webkit-playsinline></video>
 
     <script>
         // --- CONFIGURATION ---
-        const PARTICLE_COUNT = 2200; // Increased for better hand density
-        const PARTICLE_SIZE = 0.25;
-        const LERP_SPEED = 0.15; // Faster for responsive tracking
+        const PARTICLE_COUNT = 2000;
+        const PARTICLE_SIZE = 0.22;
         
-        // Define the connections between landmarks to form "bones"
-        const HAND_CONNECTIONS = [
-            [0, 1], [1, 2], [2, 3], [3, 4],       // Thumb
-            [0, 5], [5, 6], [6, 7], [7, 8],       // Index
-            [0, 9], [9, 10], [10, 11], [11, 12],  // Middle
-            [0, 13], [13, 14], [14, 15], [15, 16],// Ring
-            [0, 17], [17, 18], [18, 19], [19, 20] // Pinky
-        ];
-
+        // --- VARIABLES ---
         let scene, camera, renderer, particles, geometry;
-        let currentPositions = [];
-        let targetPositions = [];
-        let latestLandmarks = null;
-        let mode = 'hand'; // 'hand' or 'explode'
-        let handColor = 0.0;
+        let targetPositions = [], currentPositions = [];
+        let handPos = new THREE.Vector3(0,0,0);
+        let handRotation = new THREE.Euler(0,0,0);
+        let handDepth = 0;
+        let currentShape = 'cloud';
+        let targetColor = new THREE.Color(0xffffff);
 
-        function initThree() {
+        // --- INIT 3D WORLD ---
+        function init() {
             scene = new THREE.Scene();
-            // Add fog for depth fading
-            scene.fog = new THREE.FogExp2(0x050505, 0.035);
+            scene.fog = new THREE.FogExp2(0x050505, 0.035); // Depth fog
 
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100);
             camera.position.z = 15;
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({antialias:true});
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             document.body.appendChild(renderer.domElement);
 
-            // Create geometry
-            const positions = new Float32Array(PARTICLE_COUNT * 3);
-            const colors = new Float32Array(PARTICLE_COUNT * 3);
-            
-            for(let i=0; i<PARTICLE_COUNT; i++) {
-                currentPositions.push(new THREE.Vector3(0,0,0));
-                targetPositions.push(new THREE.Vector3((Math.random()-0.5)*10, (Math.random()-0.5)*10, 0));
-                
-                colors[i*3] = 0; colors[i*3+1] = 1; colors[i*3+2] = 1;
-            }
-
+            // Particles
             geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            const posArray = new Float32Array(PARTICLE_COUNT * 3);
+            const colArray = new Float32Array(PARTICLE_COUNT * 3);
 
-            // Glowing particle texture
-            const sprite = new THREE.TextureLoader().load('https://threejs.org/examples/textures/sprites/spark1.png');
-            const material = new THREE.PointsMaterial({
-                size: PARTICLE_SIZE,
-                map: sprite,
-                vertexColors: true,
-                blending: THREE.AdditiveBlending,
-                depthWrite: false,
-                transparent: true,
-                opacity: 0.85
-            });
-
-            particles = new THREE.Points(geometry, material);
-            scene.add(particles);
-
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-        }
-
-        // --- MATH: Map Particles to Hand Bones ---
-        function updateTargetsFromHand(landmarks) {
-            // We have 2200 particles. We distribute them across the 20 bone connections.
-            // 2200 / 20 = 110 particles per bone segment.
-            
-            let pIndex = 0;
-            const particlesPerBone = Math.floor(PARTICLE_COUNT / HAND_CONNECTIONS.length);
-
-            HAND_CONNECTIONS.forEach(pair => {
-                const idx
+            for(let i=0; i<PARTICLE_COUNT; i++){
+                const x = (Math.random()-0.5)*1
                 
